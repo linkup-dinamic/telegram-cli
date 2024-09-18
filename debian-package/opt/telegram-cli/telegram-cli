@@ -1,0 +1,246 @@
+#!/usr/bin/python3
+
+"""
+This file is part of telegram-cli
+Copyright (C) 2024 Linkup Dinàmic
+
+telegram-cli is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+"""
+
+import os 
+from pathlib import Path
+import configparser
+from argparse import ArgumentParser, _SubParsersAction
+from telegram.client import Telegram, AuthorizationState
+import threading
+
+def contact_list(tg : Telegram, args):
+    response = tg.call_method("getContacts", {})
+    response.wait()
+
+    if args.user_id:
+        response = tg.call_method("getUser", {
+            "user_id": args.user_id
+        })
+        response.wait()
+        print(f"{response.update['id']} {response.update['first_name']} {response.update['last_name']} {response.update['phone_number']}")
+    else:
+        for user_id in response.update['user_ids']:
+            response = tg.call_method("getUser", {
+                "user_id": user_id
+            })
+            response.wait()
+            print(f"{response.update['id']} {response.update['first_name']} {response.update['last_name']} {response.update['phone_number']}")
+
+def contact_create(tg : Telegram, args):
+    response = tg.import_contacts([{ "phone_number": args.phone_number, "first_name": args.first_name, "last_name": args.last_name }])
+    response.wait()
+    print(response.update['user_ids'][0])
+
+def contact_delete(tg : Telegram, args):
+    tg.call_method("removeContacts", { "user_ids": [args.user_id] }).wait()
+
+
+def chat_list(tg: Telegram, args):
+    get_chats_result = tg.get_chats()
+    get_chats_result.wait()
+    for chat_id in get_chats_result.update['chat_ids']:
+        chat = tg.get_chat(chat_id)
+        chat.wait()
+        print(f"{chat_id} {chat.update['title']} {chat.update['unread_count']}")
+    
+def group_create(tg : Telegram, args):
+    response = tg.call_method("createNewSupergroupChat", {
+        "title": args.title,
+        "is_forum": False,
+        "is_channel": False,
+        "description": "",
+        "location": None,
+        "message_auto_delete_time": 0,
+        "for_import": False
+    })
+
+    response.wait()
+    print(response.update)
+
+def group_delete(tg : Telegram, args):
+    get_chats_result = tg.get_chats()
+    get_chats_result.wait()
+    response = tg.call_method("deleteChat", {
+        "chat_id": args.supergroup_id,
+    })
+
+    response.wait()
+    print(response.error_info)
+
+def group_member_add(tg : Telegram, args):
+    get_chats_result = tg.get_chats()
+    get_chats_result.wait()
+    response = tg.call_method("addChatMember", {
+        "chat_id": args.supergroup_id,
+        "user_id": args.user_id,
+        "forward_limit": 0
+    })
+
+    response.wait()
+
+def group_member_remove(tg : Telegram, args):
+    get_chats_result = tg.get_chats()
+    get_chats_result.wait()
+    response = tg.call_method("setChatMemberStatus", {
+        "chat_id": args.supergroup_id,
+        "member_id": {
+            "@type": "messageSenderUser",
+            "user_id": args.user_id
+        },
+        "status": {
+            "@type": "chatMemberStatusLeft"
+        }
+    })
+
+    response.wait()
+
+def chat(tg : Telegram, args):
+    get_chats_result = tg.get_chats()
+    get_chats_result.wait()
+
+    chat_id = args.chat_id
+
+    if args.chat_id == None:
+        response = tg.call_method("createPrivateChat", {
+            "user_id": args.user_id,
+            "force": False
+        })
+        response.wait()
+        chat_id = response.update['id']
+
+    send_message_result = tg.send_message(
+        chat_id=chat_id,
+        text=args.text,
+    )
+    send_message_result.wait()
+    message_has_been_sent = threading.Event()
+
+    def update_message_send_succeeded_handler(update):
+        if update["old_message_id"] == send_message_result.update["id"]:
+            message_has_been_sent.set()
+    tg.add_update_handler("updateMessageSendSucceeded", update_message_send_succeeded_handler)
+    message_has_been_sent.wait(timeout=60)
+
+def chat_get(tg : Telegram, args):
+    # TODO: Not getting messages as expected
+    chat_history = tg.get_chat_history(chat_id=args.chat_id)
+    chat_history.wait()
+    for message in chat_history.update['messages']:
+        print(f"{ message['content']['text']['text'] }")
+
+
+def main(config, args):
+    tg : Telegram = Telegram(
+        library_path=os.path.dirname(os.path.realpath(__file__))+'/libtdjson.so',
+        api_id=config['DEFAULT']['api_id'],
+        api_hash=config['DEFAULT']['api_hash'],
+        phone=config['DEFAULT']['phone_number'],
+        database_encryption_key='changekey123',
+        files_directory=Path.home() / ".config" / "telegram-cli",
+        tdlib_verbosity=0,
+    )
+
+    auth_state = tg.login(False)
+
+    if auth_state == AuthorizationState.READY:
+        args.func(tg, args)
+    else:
+        if args.auth_code == None:
+            print("Login needed!")
+        else:
+            auth_state = tg.send_code(args.auth_code)
+            if auth_state == AuthorizationState.READY:
+                print("Login success.")
+            else:
+                print("Login failed.")
+    
+    tg.stop()
+
+
+class Actions:
+
+    def __init__(self, parser : ArgumentParser) -> None:
+        subparser : _SubParsersAction = parser.add_subparsers()
+        self.parser_stack = [parser, subparser]
+        pass
+
+    def create_category(self, name, function = None, args : list[dict] = []):
+        subparser : _SubParsersAction = self.parser_stack[-1]
+        parser : ArgumentParser = subparser.add_parser(name)
+        parser.set_defaults(func=function)
+        for arg in args:
+            if arg['name'].startswith("-"):
+                parser.add_argument(arg['name'], required=arg.get("required", True))
+            else:
+                parser.add_argument(arg['name'])
+        self.parser_stack.append(parser)
+        self.parser_stack.append(parser.add_subparsers())
+        return self
+    
+    def create_action(self, name, function, args : list[dict] = None):
+        parser : ArgumentParser = self.parser_stack[-1].add_parser(name)
+        if args != None:
+            for arg in args:
+                if arg['name'].startswith("-"):
+                    parser.add_argument(arg['name'], required=True)
+                else:
+                    parser.add_argument(arg['name'])
+        parser.set_defaults(func=function)
+        return self
+    
+    def close(self):
+        self.parser_stack.pop()
+        if len(self.parser_stack) == 1:
+            return self.parser_stack.pop().parse_args()
+        else:
+            self.parser_stack.pop()
+            return self
+
+if __name__ == "__main__":
+    parser = ArgumentParser()
+
+    parser.add_argument("--config-file", required=False, default=os.path.dirname(os.path.realpath(__file__))+'/profile.conf')
+    parser.add_argument("--auth-code", required=False, default=None)
+
+    parser.set_defaults(func=chat_list)
+
+    args = Actions(parser) \
+        .create_category('contact', contact_list, [{ 'name': '--user-id', 'required': False }]) \
+            .create_action('list', contact_list) \
+            .create_action('create', contact_create, [{ 'name': '--first-name' }, { 'name': '--last-name' }, { 'name': '--phone-number' }]) \
+            .create_action('delete', contact_delete) \
+            .close() \
+        .create_category('group', args=[{'name': '--supergroup-id', 'required': False}]) \
+            .create_action('create', group_create, [{ 'name': '--title' }]) \
+            .create_action('delete', group_delete) \
+            .create_category('member', args=[{'name': '--user-id', 'required': True}]) \
+                .create_action('create', group_member_add) \
+                .create_action('delete', group_member_remove) \
+                .close() \
+            .close() \
+        .create_category('chat', chat_get, args=[{'name': '--chat-id', 'required': False}, {'name': '--user-id', 'required': False}]) \
+            .create_action('send', chat, args=[{'name': 'text'}]) \
+            .close() \
+        .close()
+
+    config = configparser.ConfigParser()
+    config.read(args.config_file)
+
+    main(config, args)

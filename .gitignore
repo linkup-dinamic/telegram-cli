@@ -1,0 +1,6 @@
+td
+.venv
+*.so
+dist
+*.pyc
+*.test.conf
