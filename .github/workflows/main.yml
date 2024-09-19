@@ -1,0 +1,17 @@
+name: Debian Package
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - run: ./build.sh
+    - uses: actions/upload-artifact@v4
+      with:
+        name: telegram-cli
+        path: dist/*.deb
