@@ -3,7 +3,7 @@
 ## Build
 
 ```
-API_ID=x API_HASH=x ./build.sh
+API_ID=x API_HASH=x sudo ./build.sh
 ```
 
 ## Install

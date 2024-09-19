@@ -153,7 +153,7 @@ def main(config, args):
         api_hash=config['DEFAULT']['api_hash'],
         phone=config['DEFAULT']['phone_number'],
         database_encryption_key='changekey123',
-        files_directory=Path.home() / ".config" / "telegram-cli",
+        files_directory=Path.home() / ".local" / "share" / "telegram-cli",
         tdlib_verbosity=0,
     )
 
