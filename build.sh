@@ -22,6 +22,15 @@ API_ID=$(echo $API_ID)
 API_HASH=$(echo $API_HASH)
 EOF
 
+cat > debian-package/DEBIAN/control << EOF
+Package: telegram-cli
+Version: 0.1-0
+Maintainer: Linkup
+Architecture: $(dpkg --print-architecture)
+Description: Telegram Client for CLI
+Depends: python3
+EOF
+
 mkdir dist
 dpkg-deb --build debian-package dist
 
